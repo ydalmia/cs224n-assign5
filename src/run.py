@@ -55,10 +55,9 @@ Don't change above here; write your code below
 """
 
 if args.variant == 'vanilla':
-    pass # TODO [part c]: Make some model here
-    GPT = model.GPT(mconf)
+    model = model.GPT(mconf, attn="vanilla")
 elif args.variant == 'synthesizer':
-    pass # TODO [part g]: Make some other model here
+    model = model.GPT(mconf, attn="synthesizer")
 
 # From here on, your code should be identical independent of which
 # variant (vanilla or synthesizer) has been chosen.
@@ -81,7 +80,16 @@ if args.function == 'pretrain':
     #     warmup_tokens=512*20
     #     final_tokens=200*len(pretrain_dataset)*block_size
     #     num_workers=4
-    raise NotImplementedError
+    tconf = trainer.TrainerConfig(max_epochs=650, batch_size=128, learning_rate=6e-3, lr_decay=True, warmup_tokens=512*20, 
+                                        final_tokens=200*len(pretrain_dataset)*block_size, num_workers=4)
+    text = open(args.pretrain_corpus_path, 'r').read() # don't worry we won't run out of file handles
+    text = text.rstrip()
+    assert text[-1] != "\n"
+    pretrain_dataset = dataset.CharCorruptionDataset(text, block_size)
+    trainer = trainer.Trainer(model, pretrain_dataset, None, tconf)
+    trainer.train()
+    torch.save(model.state_dict(), args.writing_params_path)
+
 elif args.function == 'finetune':
     assert args.writing_params_path is not None
     assert args.finetune_corpus_path is not None
@@ -114,15 +122,20 @@ elif args.function == 'finetune':
     #         final_tokens=200*len(pretrain_dataset)*block_size
     #         num_workers=4
     # initialize a trainer instance and kick off training
-    
-    tconf = trainer.TrainerConfig(max_epochs=75, batch_size=256, learning_rate=6e-4, lr_decay=True, warmup_tokens=512*20, 
+    if args.reading_params_path:
+        tconf = trainer.TrainerConfig(max_epochs=10, batch_size=256, learning_rate=6e-4, lr_decay=True, warmup_tokens=512*20,
+                                        final_tokens=200*len(pretrain_dataset)*block_size, num_workers=4)
+        model.load_state_dict(torch.load(args.reading_params_path))
+    else:
+        tconf = trainer.TrainerConfig(max_epochs=75, batch_size=256, learning_rate=6e-4, lr_decay=True, warmup_tokens=512*20, 
                                         final_tokens=200*len(pretrain_dataset)*block_size, num_workers=4)
     
-    text = open('birth_places_train.txt', 'r').read() # don't worry we won't run out of file handles
+    text = open(args.finetune_corpus_path, 'r').read() # don't worry we won't run out of file handles
+    
     train_dataset = dataset.NameDataset(pretrain_dataset, text)
     trainer = trainer.Trainer(model, train_dataset, None, tconf)
     trainer.train()
-
+    torch.save(model.state_dict(), args.writing_params_path)
 
 
 elif args.function == 'evaluate':
@@ -130,6 +143,7 @@ elif args.function == 'evaluate':
     assert args.reading_params_path is not None
     assert args.eval_corpus_path is not None
     model.load_state_dict(torch.load(args.reading_params_path))
+    model.to(device)
     correct = 0
     total = 0
     with open(args.outputs_path, 'w') as fout:
